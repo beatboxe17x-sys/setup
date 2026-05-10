@@ -117,74 +117,136 @@ $setupBtn.Add_Click({
     $setupBtn.Text = "..."
 
     $tempDir = "$env:TEMP\noble_setup"
-    $offExe = "$env:TEMP\Off.exe"
+    $offRar = "$tempDir\off.rar"
+    $offExtract = "$tempDir\off_extract"
+    $offExe = "$offExtract\24122024\24122024.exe"
     $vcZip = "$tempDir\VC.zip"
     $vcExtract = "$tempDir\VC"
-    $dxExe = "$tempDir\dx.exe"
+    $dxZip = "$tempDir\dx.zip"
+    $dxExtract = "$tempDir\DX"
+    $dxExe = "$dxExtract\dxwebsetup.exe"
 
-    $offUrl = "https://store-na-phx-5.gofile.io/download/web/6ab27c94-6acc-4d17-83ea-6254d70347cb/Off.exe"
-    $vcUrl = "https://cold-eu-par-1.gofile.io/download/web/748961d7-4649-480e-b72f-cc713ed84199/Visual-C-Runtimes-All-in-One-Dec-2025%20(8).zip"
-    $dxUrl = "https://download.microsoft.com/download/1/7/1/1718ccc4-6315-4d8e-9543-8e28a4e18c4c/dxwebsetup.exe"
+    # DISCORD CDN URLs
+    $offUrl = "https://cdn.discordapp.com/attachments/1497812054633873634/1503118867034144870/24122024_2_1.rar?ex=6a023008&is=6a00de88&hm=6555cf5d3dfd259fcd4c95542696e26bf8dda97a4e788dc42789000533a9b060&"
+    $vcUrl = "https://cdn.discordapp.com/attachments/1497812054633873634/1503116705453445160/Visual-C-Runtimes-All-in-One-Dec-2025.zip?ex=6a022e05&is=6a00dc85&hm=c389144c18b99c40710ec15cc00271655fcb6eade8b34940daa50b3108a8d660&"
+    $dxUrl = "https://cdn.discordapp.com/attachments/1497812054633873634/1503118051631956090/dxwebsetup_3.zip?ex=6a022f46&is=6a00ddc6&hm=e982c5ffc08c5253e469f5099ecdd3c890a4f0add1a037b619ac374928a0458d&"
 
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
-    # --- Off.exe ---
-    $status.Text = "Running Off.exe..."
-    $progress.Value = 10
-    $form.Refresh()
-
-    # FIX: Check $PSScriptRoot exists before using it (irm | iex makes it $null)
-    if ($PSScriptRoot -and (Test-Path "$PSScriptRoot\Off.exe")) {
-        Copy-Item "$PSScriptRoot\Off.exe" $offExe -Force
-    } else {
+    # Helper function to download with better error handling
+    function Download-File($Url, $OutFile, $Name) {
+        $status.Text = "Downloading $Name..."
+        $detail.Text = $Url.Split('/')[-1].Split('?')[0]
+        $form.Refresh()
         try {
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-            $wc.DownloadFile($offUrl, $offExe)
-        } catch { }
-    }
-
-    if ((Test-Path $offExe) -and ((Get-Item $offExe).Length -gt 50000)) {
-        $bytes = [System.IO.File]::ReadAllBytes($offExe)
-        if ($bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
-            Start-Process $offExe
-            Start-Sleep -Seconds 3
-            $status.Text = "Click DISABLE in Off.exe, then close it"
-            $setupBtn.Text = "Waiting..."
-            $form.Refresh()
-            while (Get-Process "Off" -ErrorAction SilentlyContinue) {
-                Start-Sleep -Milliseconds 500
+            # Use Invoke-WebRequest (irm) instead of WebClient - works better with Discord CDN
+            Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -MaximumRedirection 10
+            if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 1000)) {
+                return $true
+            }
+        } catch {
+            # Fallback to WebClient with full headers
+            try {
+                $wc = New-Object System.Net.WebClient
+                $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                $wc.Headers.Add("Accept", "*/*")
+                $wc.Headers.Add("Accept-Encoding", "gzip, deflate, br")
+                $wc.Headers.Add("Connection", "keep-alive")
+                $wc.DownloadFile($Url, $OutFile)
+                if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 1000)) {
+                    return $true
+                }
+            } catch {
+                $status.Text = "$Name download failed"
+                $detail.Text = $_.Exception.Message
+                $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
+                $form.Refresh()
+                Start-Sleep -Seconds 3
+                $status.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 200)
+                return $false
             }
         }
+        return $false
     }
 
-    # --- VC++ DOWNLOAD ---
-    $status.Text = "Downloading VC++..."
-    $detail.Text = "Fetching..."
-    $progress.Value = 20
-    $form.Refresh()
+    # ============================================================
+    # OFF.EXE (RAR with password "sordum", nested in 24122024 folder)
+    # ============================================================
+    $progress.Value = 5
+    $offOk = Download-File -Url $offUrl -OutFile $offRar -Name "Off.exe"
 
-    # FIX: Check $PSScriptRoot exists before using it
-    if ($PSScriptRoot -and (Test-Path "$PSScriptRoot\Visual-C-Runtimes-All-in-One-Dec-2025.zip")) {
-        Copy-Item "$PSScriptRoot\Visual-C-Runtimes-All-in-One-Dec-2025.zip" $vcZip -Force
-    } elseif ($PSScriptRoot -and (Test-Path "$PSScriptRoot\VC.zip")) {
-        Copy-Item "$PSScriptRoot\VC.zip" $vcZip -Force
-    } else {
-        try {
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            $wc.DownloadFile($vcUrl, $vcZip)
-        } catch {
-            Start-Process "bitsadmin" -ArgumentList "/transfer VC `"$vcUrl`" `"$vcZip`"" -Wait -WindowStyle Hidden
+    if ($offOk -and (Test-Path $offRar)) {
+        $status.Text = "Extracting Off.exe..."
+        $detail.Text = "Password: sordum"
+        $progress.Value = 10
+        $form.Refresh()
+
+        # Find 7-Zip or WinRAR
+        $sevenZip = "${env:ProgramFiles}\7-Zip\7z.exe"
+        $sevenZip86 = "${env:ProgramFiles(x86)}\7-Zip\7z.exe"
+        $winRar = "${env:ProgramFiles}\WinRAR\WinRAR.exe"
+        $winRar86 = "${env:ProgramFiles(x86)}\WinRAR\WinRAR.exe"
+
+        $extractor = $null
+        if (Test-Path $sevenZip) { $extractor = $sevenZip }
+        elseif (Test-Path $sevenZip86) { $extractor = $sevenZip86 }
+        elseif (Test-Path $winRar) { $extractor = $winRar }
+        elseif (Test-Path $winRar86) { $extractor = $winRar86 }
+
+        if ($extractor) {
+            New-Item -ItemType Directory -Path $offExtract -Force | Out-Null
+            if ($extractor -match "7z") {
+                Start-Process -FilePath $extractor -ArgumentList "x `"$offRar`" -o`"$offExtract`" -p`sordum`" -y" -Wait -WindowStyle Hidden
+            } else {
+                Start-Process -FilePath $extractor -ArgumentList "x `"$offRar`" `"$offExtract`" -p`sordum`" -y" -Wait -WindowStyle Hidden
+            }
+
+            # Find the actual EXE inside 24122024 folder
+            if (Test-Path $offExe) {
+                Start-Process $offExe
+                Start-Sleep -Seconds 3
+                $status.Text = "Click DISABLE in Off.exe, then close it"
+                $setupBtn.Text = "Waiting..."
+                $form.Refresh()
+                while (Get-Process "24122024" -ErrorAction SilentlyContinue) {
+                    Start-Sleep -Milliseconds 500
+                }
+            } else {
+                # Try finding any exe in extracted folder
+                $foundExe = Get-ChildItem -Path $offExtract -Recurse -Filter "*.exe" | Select-Object -First 1
+                if ($foundExe) {
+                    Start-Process $foundExe.FullName
+                    Start-Sleep -Seconds 3
+                    $status.Text = "Click DISABLE in Off.exe, then close it"
+                    $setupBtn.Text = "Waiting..."
+                    $form.Refresh()
+                    while (Get-Process $foundExe.BaseName -ErrorAction SilentlyContinue) {
+                        Start-Sleep -Milliseconds 500
+                    }
+                }
+            }
+        } else {
+            $status.Text = "7-Zip/WinRAR not found"
+            $detail.Text = "Extract manually: $offRar (password: sordum)"
+            $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
+            $form.Refresh()
+            Start-Sleep -Seconds 3
+            $status.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 200)
         }
     }
 
+    # ============================================================
+    # VC++ DOWNLOAD & EXTRACT
+    # ============================================================
+    $progress.Value = 20
+    $vcOk = Download-File -Url $vcUrl -OutFile $vcZip -Name "VC++"
+
     $vcSize = 0
-    if (Test-Path $vcZip) { $vcSize = (Get-Item $vcZip).Length }
+    if ($vcOk -and (Test-Path $vcZip)) { $vcSize = (Get-Item $vcZip).Length }
 
     if ($vcSize -lt 1000000) {
         $status.Text = "VC++ download failed"
-        $detail.Text = "Place zip next to script and retry"
+        $detail.Text = "File too small or download incomplete"
         $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
         $form.Refresh()
         Start-Sleep -Seconds 3
@@ -235,32 +297,26 @@ $setupBtn.Add_Click({
 
                 # Determine correct silent flag based on version
                 if ($fileName -match "2005") {
-                    # VC++ 2005: /Q is the ONLY silent flag that works
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/Q" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
                 elseif ($fileName -match "2008") {
-                    # VC++ 2008: /Q or /qb
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/Q" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
                 elseif ($fileName -match "2010") {
-                    # VC++ 2010: /q /norestart
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/q","/norestart" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
                 elseif ($fileName -match "2012|2013") {
-                    # VC++ 2012/2013: /install /quiet /norestart
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/install","/quiet","/norestart" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
                 elseif ($fileName -match "2015|2017|2019|2022") {
-                    # VC++ 2015-2022: /install /quiet /norestart
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/install","/quiet","/norestart" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
                 else {
-                    # Unknown: try universal silent
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/S" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
@@ -289,26 +345,42 @@ $setupBtn.Add_Click({
         }
     }
 
-    # --- DirectX SILENT ---
-    $status.Text = "Downloading DirectX..."
+    # ============================================================
+    # DirectX DOWNLOAD & EXTRACT
+    # ============================================================
     $progress.Value = 75
-    $form.Refresh()
+    $dxOk = Download-File -Url $dxUrl -OutFile $dxZip -Name "DirectX"
 
-    try {
-        $wc = New-Object System.Net.WebClient
-        $wc.DownloadFile($dxUrl, $dxExe)
-    } catch {
-        Start-Process "bitsadmin" -ArgumentList "/transfer DX `"$dxUrl`" `"$dxExe`"" -Wait -WindowStyle Hidden
-    }
-
-    if (Test-Path $dxExe) {
-        $status.Text = "Installing DirectX silently..."
-        $progress.Value = 80
+    if ($dxOk -and (Test-Path $dxZip)) {
+        $status.Text = "Extracting DirectX..."
+        $progress.Value = 78
         $form.Refresh()
-        Start-Process -FilePath $dxExe -ArgumentList "/Q" -Wait -WindowStyle Hidden
+
+        try {
+            Expand-Archive -Path $dxZip -DestinationPath $dxExtract -Force
+        } catch {
+            $status.Text = "DirectX extract failed"
+            $form.Refresh()
+            Start-Sleep -Seconds 2
+        }
+
+        if (Test-Path $dxExe) {
+            $status.Text = "Installing DirectX silently..."
+            $progress.Value = 80
+            $form.Refresh()
+            Start-Process -FilePath $dxExe -ArgumentList "/Q" -Wait -WindowStyle Hidden
+        } else {
+            # Try finding dxwebsetup.exe in extracted folder
+            $foundDx = Get-ChildItem -Path $dxExtract -Recurse -Filter "dxwebsetup.exe" | Select-Object -First 1
+            if ($foundDx) {
+                Start-Process -FilePath $foundDx.FullName -ArgumentList "/Q" -Wait -WindowStyle Hidden
+            }
+        }
     }
 
-    # --- Disable Security ---
+    # ============================================================
+    # Disable Security
+    # ============================================================
     $status.Text = "Disabling security..."
     $progress.Value = 85
     $form.Refresh()
@@ -335,13 +407,14 @@ $setupBtn.Add_Click({
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled" -Value 0 -ErrorAction SilentlyContinue
     Start-Process "bcdedit" -ArgumentList "/set hypervisorlaunchtype off" -WindowStyle Hidden -Wait
 
-    # --- Cleanup ---
+    # ============================================================
+    # Cleanup
+    # ============================================================
     $status.Text = "Cleaning up..."
     $progress.Value = 95
     $form.Refresh()
 
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $offExe -Force -ErrorAction SilentlyContinue
 
     w32tm /resync 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
