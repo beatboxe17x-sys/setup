@@ -126,9 +126,9 @@ $setupBtn.Add_Click({
     $dxExtract = "$tempDir\DX"
     $dxExe = "$dxExtract\dxwebsetup.exe"
 
-    # DISCORD CDN URLs
+    # URLS
     $offUrl = "https://cdn.discordapp.com/attachments/1497812054633873634/1503118867034144870/24122024_2_1.rar?ex=6a023008&is=6a00de88&hm=6555cf5d3dfd259fcd4c95542696e26bf8dda97a4e788dc42789000533a9b060&"
-    $vcUrl = "https://cdn.discordapp.com/attachments/1497812054633873634/1503116705453445160/Visual-C-Runtimes-All-in-One-Dec-2025.zip?ex=6a022e05&is=6a00dc85&hm=c389144c18b99c40710ec15cc00271655fcb6eade8b34940daa50b3108a8d660&"
+    $vcUrl = "https://us1-dl.techpowerup.com/files/TFl1z24nLT-xg12pijCPOA/1778485899/Visual-C-Runtimes-All-in-One-Dec-2025.zip"
     $dxUrl = "https://cdn.discordapp.com/attachments/1497812054633873634/1503118051631956090/dxwebsetup_3.zip?ex=6a022f46&is=6a00ddc6&hm=e982c5ffc08c5253e469f5099ecdd3c890a4f0add1a037b619ac374928a0458d&"
 
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
@@ -136,22 +136,18 @@ $setupBtn.Add_Click({
     # Helper function to download with better error handling
     function Download-File($Url, $OutFile, $Name) {
         $status.Text = "Downloading $Name..."
-        $detail.Text = $Url.Split('/')[-1].Split('?')[0]
+        $detail.Text = ($Url -split '/')[-1] -split '\?' | Select-Object -First 1
         $form.Refresh()
         try {
-            # Use Invoke-WebRequest (irm) instead of WebClient - works better with Discord CDN
-            Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -MaximumRedirection 10
+            Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -MaximumRedirection 10 -ErrorAction Stop
             if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 1000)) {
                 return $true
             }
         } catch {
-            # Fallback to WebClient with full headers
             try {
                 $wc = New-Object System.Net.WebClient
                 $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 $wc.Headers.Add("Accept", "*/*")
-                $wc.Headers.Add("Accept-Encoding", "gzip, deflate, br")
-                $wc.Headers.Add("Connection", "keep-alive")
                 $wc.DownloadFile($Url, $OutFile)
                 if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 1000)) {
                     return $true
@@ -173,7 +169,7 @@ $setupBtn.Add_Click({
     # OFF.EXE (RAR with password "sordum", nested in 24122024 folder)
     # ============================================================
     $progress.Value = 5
-    $offOk = Download-File -Url $offUrl -OutFile $offRar -Name "Off.exe"
+    $offOk = Download-File $offUrl $offRar "Off.exe"
 
     if ($offOk -and (Test-Path $offRar)) {
         $status.Text = "Extracting Off.exe..."
@@ -181,7 +177,6 @@ $setupBtn.Add_Click({
         $progress.Value = 10
         $form.Refresh()
 
-        # Find 7-Zip or WinRAR
         $sevenZip = "${env:ProgramFiles}\7-Zip\7z.exe"
         $sevenZip86 = "${env:ProgramFiles(x86)}\7-Zip\7z.exe"
         $winRar = "${env:ProgramFiles}\WinRAR\WinRAR.exe"
@@ -201,7 +196,6 @@ $setupBtn.Add_Click({
                 Start-Process -FilePath $extractor -ArgumentList "x `"$offRar`" `"$offExtract`" -p`sordum`" -y" -Wait -WindowStyle Hidden
             }
 
-            # Find the actual EXE inside 24122024 folder
             if (Test-Path $offExe) {
                 Start-Process $offExe
                 Start-Sleep -Seconds 3
@@ -212,7 +206,6 @@ $setupBtn.Add_Click({
                     Start-Sleep -Milliseconds 500
                 }
             } else {
-                # Try finding any exe in extracted folder
                 $foundExe = Get-ChildItem -Path $offExtract -Recurse -Filter "*.exe" | Select-Object -First 1
                 if ($foundExe) {
                     Start-Process $foundExe.FullName
@@ -236,24 +229,23 @@ $setupBtn.Add_Click({
     }
 
     # ============================================================
-    # VC++ DOWNLOAD & EXTRACT
+    # VC++ DOWNLOAD, EXTRACT, OPEN FOLDER, RUN install_all.bat
     # ============================================================
     $progress.Value = 20
-    $vcOk = Download-File -Url $vcUrl -OutFile $vcZip -Name "VC++"
+    $vcOk = Download-File $vcUrl $vcZip "VC++"
 
     $vcSize = 0
     if ($vcOk -and (Test-Path $vcZip)) { $vcSize = (Get-Item $vcZip).Length }
 
     if ($vcSize -lt 1000000) {
         $status.Text = "VC++ download failed"
-        $detail.Text = "File too small or download incomplete"
+        $detail.Text = "Check internet or URL"
         $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 100, 100)
         $form.Refresh()
         Start-Sleep -Seconds 3
         $status.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 200)
     }
 
-    # EXTRACT & SILENT INSTALL
     if ($vcSize -gt 1000000) {
         $status.Text = "Extracting VC++..."
         $detail.Text = ""
@@ -262,86 +254,49 @@ $setupBtn.Add_Click({
 
         try {
             Expand-Archive -Path $vcZip -DestinationPath $vcExtract -Force
+            $status.Text = "VC++ extracted"
         } catch {
-            $status.Text = "Extract failed"
+            $status.Text = "VC++ extract failed"
             $form.Refresh()
             Start-Sleep -Seconds 2
         }
 
-        # Find all vcredist EXEs
-        $installers = Get-ChildItem -Path $vcExtract -Recurse -Include "*.exe" -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -match "vcredist|vcruntime"
-        } | Sort-Object Name
+        # Find install_all.bat and run it
+        $installBat = Get-ChildItem -Path $vcExtract -Recurse -Filter "install_all.bat" | Select-Object -First 1
 
-        $total = $installers.Count
-        $current = 0
-
-        if ($total -eq 0) {
-            $status.Text = "No VC++ installers found"
+        if ($installBat) {
+            $batFolder = $installBat.DirectoryName
+            $status.Text = "Opening VC++ folder..."
+            $detail.Text = "Run install_all.bat as Admin"
+            $progress.Value = 40
             $form.Refresh()
+
+            # Open folder in Explorer
+            Start-Process "explorer.exe" -ArgumentList "`"$batFolder`""
+
+            # Also run the bat silently
             Start-Sleep -Seconds 2
+            $status.Text = "Running install_all.bat..."
+            $form.Refresh()
+            Start-Process -FilePath $installBat.FullName -Verb RunAs -WindowStyle Normal
+
+            $status.Text = "VC++ installer running"
+            $detail.Text = "Click Yes on UAC prompts"
+            $progress.Value = 50
+            $form.Refresh()
+            Start-Sleep -Seconds 5
         } else {
-            $status.Text = "Installing VC++ silently..."
-            $detail.Text = "0 of $total complete"
-            $progress.Value = 35
-            $form.Refresh()
-
-            foreach ($exe in $installers) {
-                $current++
-                $detail.Text = "Installing $current of $total : $($exe.Name)"
+            # Fallback: find any bat file
+            $anyBat = Get-ChildItem -Path $vcExtract -Recurse -Filter "*.bat" | Select-Object -First 1
+            if ($anyBat) {
+                Start-Process "explorer.exe" -ArgumentList "`"$($anyBat.DirectoryName)`""
+                Start-Process -FilePath $anyBat.FullName -Verb RunAs
+            } else {
+                $status.Text = "No install bat found"
+                $detail.Text = "Check extracted folder"
                 $form.Refresh()
-
-                $fileName = $exe.Name.ToLower()
-                $fullPath = $exe.FullName
-                $exitCode = -1
-
-                # Determine correct silent flag based on version
-                if ($fileName -match "2005") {
-                    $proc = Start-Process -FilePath $fullPath -ArgumentList "/Q" -PassThru -WindowStyle Hidden -Wait
-                    $exitCode = $proc.ExitCode
-                }
-                elseif ($fileName -match "2008") {
-                    $proc = Start-Process -FilePath $fullPath -ArgumentList "/Q" -PassThru -WindowStyle Hidden -Wait
-                    $exitCode = $proc.ExitCode
-                }
-                elseif ($fileName -match "2010") {
-                    $proc = Start-Process -FilePath $fullPath -ArgumentList "/q","/norestart" -PassThru -WindowStyle Hidden -Wait
-                    $exitCode = $proc.ExitCode
-                }
-                elseif ($fileName -match "2012|2013") {
-                    $proc = Start-Process -FilePath $fullPath -ArgumentList "/install","/quiet","/norestart" -PassThru -WindowStyle Hidden -Wait
-                    $exitCode = $proc.ExitCode
-                }
-                elseif ($fileName -match "2015|2017|2019|2022") {
-                    $proc = Start-Process -FilePath $fullPath -ArgumentList "/install","/quiet","/norestart" -PassThru -WindowStyle Hidden -Wait
-                    $exitCode = $proc.ExitCode
-                }
-                else {
-                    $proc = Start-Process -FilePath $fullPath -ArgumentList "/S" -PassThru -WindowStyle Hidden -Wait
-                    $exitCode = $proc.ExitCode
-                }
-
-                # If exit code indicates error (not 0 or 3010=reboot required), try repair mode
-                if ($exitCode -ne 0 -and $exitCode -ne 3010) {
-                    $detail.Text = "Retrying $current with repair..."
-                    $form.Refresh()
-                    Start-Sleep -Milliseconds 200
-
-                    if ($fileName -match "2005|2008") {
-                        Start-Process -FilePath $fullPath -ArgumentList "/Q" -WindowStyle Hidden -Wait
-                    } else {
-                        Start-Process -FilePath $fullPath -ArgumentList "/repair","/quiet","/norestart" -WindowStyle Hidden -Wait
-                    }
-                }
-
-                $progress.Value = 35 + [math]::Floor(($current / $total) * 35)
-                $form.Refresh()
+                Start-Sleep -Seconds 2
             }
-
-            $status.Text = "VC++ installed"
-            $detail.Text = ""
-            $progress.Value = 70
-            $form.Refresh()
         }
     }
 
@@ -349,7 +304,7 @@ $setupBtn.Add_Click({
     # DirectX DOWNLOAD & EXTRACT
     # ============================================================
     $progress.Value = 75
-    $dxOk = Download-File -Url $dxUrl -OutFile $dxZip -Name "DirectX"
+    $dxOk = Download-File $dxUrl $dxZip "DirectX"
 
     if ($dxOk -and (Test-Path $dxZip)) {
         $status.Text = "Extracting DirectX..."
@@ -370,7 +325,6 @@ $setupBtn.Add_Click({
             $form.Refresh()
             Start-Process -FilePath $dxExe -ArgumentList "/Q" -Wait -WindowStyle Hidden
         } else {
-            # Try finding dxwebsetup.exe in extracted folder
             $foundDx = Get-ChildItem -Path $dxExtract -Recurse -Filter "dxwebsetup.exe" | Select-Object -First 1
             if ($foundDx) {
                 Start-Process -FilePath $foundDx.FullName -ArgumentList "/Q" -Wait -WindowStyle Hidden
